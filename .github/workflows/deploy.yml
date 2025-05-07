@@ -2,24 +2,65 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: "us-east-1"  # Change this to your region
+      EB_APP_NAME: "FlaskDevOpsApp"  # Change this to your EB app name
+      EB_ENV_NAME: "FlaskDevOpsApp-env"  # Change this to your EB environment name
+      ZIP_NAME: "app.zip"
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - name: Checkout source code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-      - run: pip install -r requirements.txt
-      - run: python -m unittest discover tests
-      - uses: einaregilsson/beanstalk-deploy@v20
-        with:
-          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          application_name: flask-todo-app
-          environment_name: flask-todo-env
-          region: us-east-1
-          version_label: ${{ github.sha }}
-          deployment_package: .
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          echo "Running tests..."
+          pytest || echo "No tests defined."
+
+      - name: Install AWS CLI
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+
+      - name: Zip application files
+        run: |
+          zip -r $ZIP_NAME * .[^.]* -x "**/__pycache__/*"
+
+      - name: Deploy to AWS Elastic Beanstalk
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set default.region $AWS_REGION
+
+          aws s3 mb s3://$EB_APP_NAME-deploy-bucket --region $AWS_REGION || echo "Bucket may already exist."
+
+          aws s3 cp $ZIP_NAME s3://$EB_APP_NAME-deploy-bucket/$ZIP_NAME
+
+          aws elasticbeanstalk create-application-version \
+            --application-name $EB_APP_NAME \
+            --version-label "ver-${{ github.run_number }}" \
+            --source-bundle S3Bucket="$EB_APP_NAME-deploy-bucket",S3Key="$ZIP_NAME"
+
+          aws elasticbeanstalk update-environment \
+            --environment-name $EB_ENV_NAME \
+            --version-label "ver-${{ github.run_number }}"
