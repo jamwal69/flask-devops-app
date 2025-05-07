@@ -12,10 +12,11 @@ jobs:
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: "us-east-1"  # Change this to your region
-      EB_APP_NAME: "FlaskDevOpsApp"  # Change this to your EB app name
+      AWS_REGION: "us-east-1"  # Change this if your AWS region is different
+      EB_APP_NAME: "FlaskDevOpsApp"  # Change this to your Elastic Beanstalk app name
       EB_ENV_NAME: "FlaskDevOpsApp-env"  # Change this to your EB environment name
       ZIP_NAME: "app.zip"
+      S3_BUCKET: "flask-devops-app-jamwal69"  # Use a globally unique bucket name
 
     steps:
       - name: Checkout source code
@@ -33,14 +34,14 @@ jobs:
 
       - name: Run tests
         run: |
-          echo "Running tests..."
-          pytest || echo "No tests defined."
+          pytest
+        continue-on-error: true  # Optional: doesn't fail the pipeline if no tests
 
       - name: Install AWS CLI
         run: |
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
-          sudo ./aws/install
+          ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
 
       - name: Zip application files
         run: |
@@ -52,14 +53,15 @@ jobs:
           aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
           aws configure set default.region $AWS_REGION
 
-          aws s3 mb s3://$EB_APP_NAME-deploy-bucket --region $AWS_REGION || echo "Bucket may already exist."
+          aws s3api head-bucket --bucket $S3_BUCKET || \
+          aws s3 mb s3://$S3_BUCKET --region $AWS_REGION
 
-          aws s3 cp $ZIP_NAME s3://$EB_APP_NAME-deploy-bucket/$ZIP_NAME
+          aws s3 cp $ZIP_NAME s3://$S3_BUCKET/$ZIP_NAME
 
           aws elasticbeanstalk create-application-version \
             --application-name $EB_APP_NAME \
             --version-label "ver-${{ github.run_number }}" \
-            --source-bundle S3Bucket="$EB_APP_NAME-deploy-bucket",S3Key="$ZIP_NAME"
+            --source-bundle S3Bucket="$S3_BUCKET",S3Key="$ZIP_NAME"
 
           aws elasticbeanstalk update-environment \
             --environment-name $EB_ENV_NAME \
